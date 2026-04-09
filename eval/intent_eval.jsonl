@@ -1,0 +1,36 @@
+{"text":"hi","label":"greeting"}
+{"text":"hello tutor","label":"greeting"}
+{"text":"good morning","label":"greeting"}
+{"text":"hey there","label":"greeting"}
+{"text":"what are we learning today","label":"overview"}
+{"text":"give me the lesson overview","label":"overview"}
+{"text":"today's topic please","label":"overview"}
+{"text":"show roadmap first","label":"overview"}
+{"text":"what is the concept here","label":"concept"}
+{"text":"explain the theory behind this","label":"concept"}
+{"text":"give me the definition","label":"concept"}
+{"text":"explain why this method works","label":"concept"}
+{"text":"go through an example","label":"example"}
+{"text":"walk through one problem","label":"example"}
+{"text":"pick a problem to start","label":"example"}
+{"text":"let us try an example now","label":"example"}
+{"text":"next step","label":"next_step"}
+{"text":"continue","label":"next_step"}
+{"text":"what's next","label":"next_step"}
+{"text":"go on","label":"next_step"}
+{"text":"hint please","label":"hint"}
+{"text":"give me a clue","label":"hint"}
+{"text":"a little help","label":"hint"}
+{"text":"can I get a hint","label":"hint"}
+{"text":"full solution","label":"full_solution"}
+{"text":"show all steps","label":"full_solution"}
+{"text":"solve it completely","label":"full_solution"}
+{"text":"complete solution now","label":"full_solution"}
+{"text":"jump to q3","label":"jump_to_problem"}
+{"text":"problem 3","label":"jump_to_problem"}
+{"text":"go to question 2","label":"jump_to_problem"}
+{"text":"exercise 5","label":"jump_to_problem"}
+{"text":"thanks","label":"unknown"}
+{"text":"ok got it","label":"unknown"}
+{"text":"random chat about weather","label":"unknown"}
+{"text":"can you repeat that","label":"unknown"}

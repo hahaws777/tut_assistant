@@ -24,6 +24,21 @@ def _conn() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            event_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            event_type TEXT NOT NULL,
+            intent TEXT,
+            fallback_used INTEGER NOT NULL DEFAULT 0,
+            latency_ms INTEGER,
+            parse_success INTEGER,
+            metadata_json TEXT
+        )
+        """
+    )
     return conn
 
 
@@ -115,4 +130,81 @@ def list_sessions() -> List[Dict[str, str]]:
 def delete_session(session_id: str) -> None:
     with _conn() as conn:
         conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+
+
+def log_event(
+    session_id: str,
+    event_type: str,
+    intent: Optional[str] = None,
+    fallback_used: int = 0,
+    latency_ms: Optional[int] = None,
+    parse_success: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    try:
+        event_id = str(uuid.uuid4())
+        metadata_json = json.dumps(metadata, ensure_ascii=False) if metadata is not None else None
+        with _conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO events (
+                    event_id, session_id, event_type, intent, fallback_used,
+                    latency_ms, parse_success, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    session_id,
+                    event_type,
+                    intent,
+                    int(bool(fallback_used)),
+                    latency_ms,
+                    parse_success,
+                    metadata_json,
+                ),
+            )
+    except Exception:
+        return
+
+
+def get_event_metrics(limit: int = 200) -> Dict[str, float | int]:
+    try:
+        with _conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT fallback_used, latency_ms, parse_success
+                FROM events
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    except Exception:
+        return {
+            "total_events": 0,
+            "fallback_rate": 0.0,
+            "avg_latency_ms": 0,
+            "parse_failure_count": 0,
+        }
+
+    total_events = len(rows)
+    if total_events == 0:
+        return {
+            "total_events": 0,
+            "fallback_rate": 0.0,
+            "avg_latency_ms": 0,
+            "parse_failure_count": 0,
+        }
+
+    fallback_count = sum(1 for r in rows if int(r[0] or 0) == 1)
+    latency_values = [int(r[1]) for r in rows if r[1] is not None]
+    parse_failure_count = sum(1 for r in rows if r[2] is not None and int(r[2]) == 0)
+
+    return {
+        "total_events": total_events,
+        "fallback_rate": fallback_count / total_events,
+        "avg_latency_ms": int(sum(latency_values) / len(latency_values)) if latency_values else 0,
+        "parse_failure_count": parse_failure_count,
+    }
 

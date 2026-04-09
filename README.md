@@ -120,3 +120,50 @@ Any PDF containing exercises/problems. The app extracts text and builds structur
 - **State panel**: current teaching state, problem index, step index, hint level
 - **Export chat (.md)**: export current session chat
 - **Clear chat**: clear messages and reset teaching state in current session
+
+## Intent Router Offline Evaluation
+
+The project includes an offline intent evaluation script and sample dataset:
+
+- Data: `eval/intent_eval.jsonl`
+- Script: `scripts/eval_intent.py`
+
+Run in PowerShell:
+
+```bash
+python scripts/eval_intent.py --data eval/intent_eval.jsonl
+```
+
+Optional arguments:
+
+```bash
+python scripts/eval_intent.py --data eval/intent_eval.jsonl --limit 20
+python scripts/eval_intent.py --data eval/intent_eval.jsonl --enable-llm-fallback
+```
+
+Notes:
+
+- Default mode does **not** call real OpenAI fallback (`--enable-llm-fallback` is off).
+- This helps compare deterministic rule-only routing vs hybrid routing.
+- Output includes overall accuracy, per-intent precision/recall/f1, confusion matrix, and fallback rate.
+
+## Security Boundary
+
+This project includes a minimal, engineering-focused prompt injection defense layer:
+
+- **Input sanitization** before LLM calls:
+  - remove unsafe control characters
+  - truncate overlong input
+  - detect suspicious patterns (for example, `ignore previous instructions`)
+- **Untrusted lesson data boundary**:
+  - lesson/problem text is placed in a clearly separated `UNTRUSTED_LESSON_DATA` section in the system prompt
+  - the assistant is instructed to treat lesson content as data, not executable instructions
+- **High-risk handling**:
+  - set `safety_flag`
+  - return a safe refusal message without exposing system instructions
+  - log a structured `safety_flagged` event into SQLite events
+
+Notes:
+
+- This is a baseline safety layer for practical robustness, not a complete jailbreak-proof solution.
+- The design is intentionally simple and extensible for future rule packs or model-based classifiers.

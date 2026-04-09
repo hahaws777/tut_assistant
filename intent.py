@@ -31,14 +31,14 @@ def _match_problem_index(text: str) -> Optional[int]:
     return None
 
 
-def classify_intent_hybrid(user_text: str) -> Tuple[str, Optional[int]]:
+def classify_intent_hybrid(user_text: str, enable_llm_fallback: bool = True) -> Tuple[str, Optional[int], bool]:
     text = user_text.strip().lower()
     if not text:
-        return "unknown", None
+        return "unknown", None, False
 
     problem_idx = _match_problem_index(text)
     if problem_idx is not None:
-        return "jump_to_problem", problem_idx
+        return "jump_to_problem", problem_idx, False
 
     rules = [
         ("greeting", r"\b(hi|hello|hey|yo|good morning|good afternoon|good evening)\b"),
@@ -51,10 +51,13 @@ def classify_intent_hybrid(user_text: str) -> Tuple[str, Optional[int]]:
     ]
     for intent, pattern in rules:
         if re.search(pattern, text):
-            return intent, None
+            return intent, None, False
+
+    if not enable_llm_fallback:
+        return "unknown", None, False
 
     llm_intent = classify_intent_fallback(user_text)
     if llm_intent in INTENTS:
-        return llm_intent, None
-    return "unknown", None
+        return llm_intent, None, True
+    return "unknown", None, True
 

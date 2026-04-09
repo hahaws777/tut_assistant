@@ -1,4 +1,5 @@
 import re
+import time
 from typing import List
 
 import streamlit as st
@@ -11,8 +12,17 @@ from llm import (
 )
 from intent import classify_intent_hybrid
 from parser import Problem, parse_markdown, parse_pdf
+from sanitizer import sanitize_text
 from state import RoadmapNode, TeachingState, apply_transition, reset_state
-from storage import create_session_id, delete_session, list_sessions, load_session, save_session
+from storage import (
+    create_session_id,
+    delete_session,
+    get_event_metrics,
+    list_sessions,
+    load_session,
+    log_event,
+    save_session,
+)
 
 
 def _fix_latex(text: str) -> str:
@@ -129,25 +139,75 @@ def _show_upload_page() -> None:
     )
 
     if uploaded is not None:
+        parse_success = 0
         fname = uploaded.name.lower()
         with st.spinner("Parsing problems..."):
             if fname.endswith(".pdf"):
                 raw_text = parse_pdf(uploaded.read())
-                problems = extract_problems_from_text(raw_text)
+                sanitized = sanitize_text(raw_text, max_len=20000)
+                problems = extract_problems_from_text(sanitized.text)
+                if sanitized.safety_flag:
+                    try:
+                        log_event(
+                            session_id=st.session_state.session_id,
+                            event_type="safety_flagged",
+                            parse_success=0,
+                            metadata={
+                                "source": "upload_pdf",
+                                "pattern_count": len(sanitized.suspicious_patterns),
+                                "patterns": sanitized.suspicious_patterns,
+                            },
+                        )
+                    except Exception:
+                        pass
             else:
                 text = uploaded.read().decode("utf-8")
-                problems = parse_markdown(text)
+                sanitized = sanitize_text(text, max_len=20000)
+                problems = parse_markdown(sanitized.text)
                 if not problems:
-                    problems = extract_problems_from_text(text)
+                    problems = extract_problems_from_text(sanitized.text)
+                if sanitized.safety_flag:
+                    try:
+                        log_event(
+                            session_id=st.session_state.session_id,
+                            event_type="safety_flagged",
+                            parse_success=0,
+                            metadata={
+                                "source": "upload_text",
+                                "pattern_count": len(sanitized.suspicious_patterns),
+                                "patterns": sanitized.suspicious_patterns,
+                            },
+                        )
+                    except Exception:
+                        pass
 
         if not problems:
+            try:
+                log_event(
+                    session_id=st.session_state.session_id,
+                    event_type="parse_complete",
+                    parse_success=0,
+                    metadata={"file_name": uploaded.name},
+                )
+            except Exception:
+                pass
             st.error("Could not extract any problems from the file. Please check the format.")
             return
+        parse_success = 1
 
         st.session_state.problems = problems
         st.session_state.file_name = uploaded.name
         st.session_state.messages = []
         st.session_state.teaching_state = TeachingState()
+        try:
+            log_event(
+                session_id=st.session_state.session_id,
+                event_type="parse_complete",
+                parse_success=parse_success,
+                metadata={"file_name": uploaded.name, "problem_count": len(problems)},
+            )
+        except Exception:
+            pass
         save_session(st.session_state.session_id, problems, [], st.session_state.teaching_state, uploaded.name)
         st.rerun()
 
@@ -160,8 +220,43 @@ def _get_stream(user_text: str):
     problems: List[Problem] = st.session_state.problems
     t_state: TeachingState = st.session_state.teaching_state
 
+    safe_input = sanitize_text(user_text, max_len=2000)
+    if safe_input.safety_flag:
+        st.session_state.safety_flag = True
+        try:
+            log_event(
+                session_id=st.session_state.session_id,
+                event_type="safety_flagged",
+                intent="unknown",
+                metadata={
+                    "source": "user_input",
+                    "pattern_count": len(safe_input.suspicious_patterns),
+                    "patterns": safe_input.suspicious_patterns,
+                },
+            )
+        except Exception:
+            pass
+        st.session_state._last_intent = "unknown"
+        return iter(
+            [
+                "I cannot help with requests that try to override system behavior. "
+                "Please ask a lesson-related question such as concept, next step, hint, or full solution."
+            ]
+        )
+
+    st.session_state.safety_flag = False
     with st.spinner("Thinking..."):
-        intent, problem_idx = classify_intent_hybrid(user_text)
+        intent, problem_idx, fallback_used = classify_intent_hybrid(safe_input.text)
+        try:
+            log_event(
+                session_id=st.session_state.session_id,
+                event_type="intent_classified",
+                intent=intent,
+                fallback_used=int(fallback_used),
+                metadata={"user_text_len": len(safe_input.text), "truncated": safe_input.was_truncated},
+            )
+        except Exception:
+            pass
         if problem_idx is not None and 0 <= problem_idx < len(problems):
             t_state.current_problem_index = problem_idx
         apply_transition(t_state, intent, problem_idx)
@@ -173,7 +268,7 @@ def _get_stream(user_text: str):
     st.session_state._last_intent = intent
 
     return stream_teaching_reply(
-        user_text=user_text,
+        user_text=safe_input.text,
         intent=intent,
         all_problems=problems,
         hint_mode=t_state.hint_mode,
@@ -263,6 +358,14 @@ def _show_chat_page() -> None:
                 st.rerun()
         st.divider()
 
+        st.markdown("#### Metrics")
+        metrics = get_event_metrics(limit=200)
+        st.caption(f"total_events: **{metrics['total_events']}**")
+        st.caption(f"fallback_rate: **{metrics['fallback_rate']:.2%}**")
+        st.caption(f"avg_latency_ms: **{metrics['avg_latency_ms']}**")
+        st.caption(f"parse_failure_count: **{metrics['parse_failure_count']}**")
+        st.divider()
+
         st.markdown("#### Roadmap")
         if t_state.initialized and t_state.roadmap:
             _render_roadmap(t_state.roadmap, t_state.active_node)
@@ -274,6 +377,7 @@ def _show_chat_page() -> None:
         st.caption(f"Problem: **{t_state.current_problem_index + 1}**")
         st.caption(f"Step: **{t_state.current_step_index}**")
         st.caption(f"Hint level: **{t_state.hint_level}**")
+        st.caption(f"Safety flag: **{bool(st.session_state.get('safety_flag', False))}**")
 
         if st.session_state.get("messages"):
             md_content = _export_chat_md()
@@ -310,8 +414,20 @@ def _show_chat_page() -> None:
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
+            start_time = time.perf_counter()
             stream = _get_stream(user_input)
             answer = st.write_stream(stream)
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            try:
+                log_event(
+                    session_id=st.session_state.session_id,
+                    event_type="reply_complete",
+                    intent=st.session_state.get("_last_intent"),
+                    latency_ms=latency_ms,
+                    metadata={"answer_len": len(answer) if isinstance(answer, str) else 0},
+                )
+            except Exception:
+                pass
 
         st.session_state.messages.append({"role": "assistant", "content": _fix_latex(answer)})
         _refresh_roadmap()
@@ -335,6 +451,8 @@ def main() -> None:
     if "session_id" not in st.session_state:
         existing = list_sessions()
         st.session_state.session_id = existing[0]["session_id"] if existing else create_session_id()
+    if "safety_flag" not in st.session_state:
+        st.session_state.safety_flag = False
 
     if "problems" not in st.session_state:
         saved = load_session(st.session_state.session_id)
