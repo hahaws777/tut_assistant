@@ -156,9 +156,6 @@ def _show_upload_page() -> None:
 # Chat page
 # ---------------------------------------------------------------------------
 
-PROBLEM_INTENTS = {"concept", "example", "next", "full_solution"}
-
-
 def _get_stream(user_text: str):
     problems: List[Problem] = st.session_state.problems
     t_state: TeachingState = st.session_state.teaching_state
@@ -186,10 +183,6 @@ def _refresh_roadmap() -> None:
     if not t_state.initialized:
         return
 
-    intent = getattr(st.session_state, "_last_intent", "other")
-    if intent not in PROBLEM_INTENTS:
-        return
-
     problems: List[Problem] = st.session_state.problems
     data = update_roadmap_leaves(
         st.session_state.messages, problems, t_state.roadmap,
@@ -210,6 +203,20 @@ def _refresh_roadmap() -> None:
         if leaves:
             node.leaves = [str(s) for s in leaves]
             node.active_leaf = max(-1, min(active_leaf, len(node.leaves) - 1))
+    elif active == -1:
+        t_state.active_node = -1
+
+
+def _export_chat_md() -> str:
+    messages = st.session_state.get("messages", [])
+    file_name = st.session_state.get("file_name", "lesson")
+    lines = [f"# Tutorial Chat — {file_name}\n"]
+    for msg in messages:
+        role = "**You**" if msg["role"] == "user" else "**Assistant**"
+        lines.append(f"### {role}\n")
+        lines.append(msg["content"] + "\n")
+        lines.append("---\n")
+    return "\n".join(lines)
 
 
 def _show_chat_page() -> None:
@@ -224,6 +231,17 @@ def _show_chat_page() -> None:
             st.caption("Say hi to start the lesson!")
         st.divider()
         st.caption(f"File: **{st.session_state.get('file_name', '—')}**")
+
+        if st.session_state.get("messages"):
+            md_content = _export_chat_md()
+            st.download_button(
+                "Export chat (.md)",
+                data=md_content,
+                file_name="tutorial_chat.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+
         if st.button("New lesson", use_container_width=True):
             clear_session()
             for key in ["problems", "file_name", "messages", "teaching_state", "_last_intent"]:
