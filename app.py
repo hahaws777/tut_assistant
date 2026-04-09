@@ -11,6 +11,7 @@ from llm import (
     update_roadmap_leaves,
 )
 from parser import Problem, parse_markdown, parse_pdf
+from persist import clear_session, load_session, save_session
 from state import RoadmapNode, TeachingState, reset_state
 
 
@@ -147,6 +148,7 @@ def _show_upload_page() -> None:
         st.session_state.file_name = uploaded.name
         st.session_state.messages = []
         st.session_state.teaching_state = TeachingState()
+        save_session(problems, [], st.session_state.teaching_state, uploaded.name)
         st.rerun()
 
 
@@ -223,12 +225,19 @@ def _show_chat_page() -> None:
         st.divider()
         st.caption(f"File: **{st.session_state.get('file_name', '—')}**")
         if st.button("New lesson", use_container_width=True):
+            clear_session()
             for key in ["problems", "file_name", "messages", "teaching_state", "_last_intent"]:
                 st.session_state.pop(key, None)
             st.rerun()
         if st.button("Clear chat", use_container_width=True):
             st.session_state.messages = []
             reset_state(t_state)
+            save_session(
+                st.session_state.problems,
+                [],
+                t_state,
+                st.session_state.get("file_name", ""),
+            )
             st.rerun()
 
     st.title("📖 Tutorial Assistant")
@@ -249,6 +258,12 @@ def _show_chat_page() -> None:
 
         st.session_state.messages.append({"role": "assistant", "content": _fix_latex(answer)})
         _refresh_roadmap()
+        save_session(
+            st.session_state.problems,
+            st.session_state.messages,
+            st.session_state.teaching_state,
+            st.session_state.get("file_name", ""),
+        )
         st.rerun()
 
 
@@ -258,6 +273,14 @@ def _show_chat_page() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Tutorial Assistant", page_icon="📖", layout="wide")
+
+    if "problems" not in st.session_state:
+        saved = load_session()
+        if saved:
+            st.session_state.problems = saved["problems"]
+            st.session_state.messages = saved["messages"]
+            st.session_state.teaching_state = saved["teaching_state"]
+            st.session_state.file_name = saved["file_name"]
 
     if "problems" not in st.session_state:
         _show_upload_page()
