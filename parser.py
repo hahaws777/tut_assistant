@@ -1,6 +1,5 @@
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import List
 
 
@@ -26,12 +25,16 @@ def _split_problem_blocks(markdown_text: str) -> List[tuple[str, str]]:
     return blocks
 
 
-def parse_problems(markdown_path: str) -> List[Problem]:
-    path = Path(markdown_path)
-    text = path.read_text(encoding="utf-8")
+def parse_markdown(text: str) -> List[Problem]:
     blocks = _split_problem_blocks(text)
+    return [Problem(title=t, statement=s) for t, s in blocks]
 
-    problems: List[Problem] = []
-    for title, statement in blocks:
-        problems.append(Problem(title=title, statement=statement))
-    return problems
+
+def parse_pdf(pdf_bytes: bytes) -> str:
+    import fitz  # pymupdf
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages: List[str] = []
+    for page in doc:
+        pages.append(page.get_text())
+    doc.close()
+    return "\n\n".join(pages)

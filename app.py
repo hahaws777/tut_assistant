@@ -5,15 +5,13 @@ import streamlit as st
 
 from llm import (
     classify_intent,
+    extract_problems_from_text,
     generate_initial_roadmap,
     stream_teaching_reply,
     update_roadmap_leaves,
 )
-from parser import Problem, parse_problems
+from parser import Problem, parse_markdown, parse_pdf
 from state import RoadmapNode, TeachingState, reset_state
-
-
-LESSON_FILE = "lesson.md"
 
 
 def _fix_latex(text: str) -> str:
@@ -22,6 +20,7 @@ def _fix_latex(text: str) -> str:
     text = re.sub(r'\\\(\s*', '$', text)
     text = re.sub(r'\s*\\\)', '$', text)
     return text
+
 
 SIDEBAR_CSS = """
 <style>
@@ -39,7 +38,6 @@ SIDEBAR_CSS = """
 ROADMAP_CSS = """
 <style>
 .rm-tree { display: flex; flex-direction: column; gap: 0; padding: 4px 0; }
-
 .rm-main-row { display: flex; align-items: center; gap: 10px; }
 .rm-dot {
     width: 24px; height: 24px; min-width: 24px;
@@ -49,22 +47,16 @@ ROADMAP_CSS = """
 .rm-d-done { background: #10b981; }
 .rm-d-active { background: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.22); }
 .rm-d-pending { background: #d1d5db; color: #9ca3af; }
-
 .rm-main-label { font-size: 13px; line-height: 1.3; }
 .rm-l-done { color: #10b981; font-weight: 600; }
 .rm-l-active { color: #3b82f6; font-weight: 700; }
 .rm-l-pending { color: #9ca3af; }
-
 .rm-vline { width: 2px; height: 16px; margin-left: 11px; border-radius: 1px; }
 .rm-vl-done { background: #10b981; }
 .rm-vl-pending { background: #e5e7eb; }
-
 .rm-leaves { margin-left: 34px; display: flex; flex-direction: column; gap: 2px; padding: 2px 0; }
 .rm-leaf { display: flex; align-items: center; gap: 8px; }
-.rm-leaf-dot {
-    width: 8px; height: 8px; min-width: 8px;
-    border-radius: 50%;
-}
+.rm-leaf-dot { width: 8px; height: 8px; min-width: 8px; border-radius: 50%; }
 .rm-ld-done { background: #10b981; }
 .rm-ld-active { background: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.22); }
 .rm-ld-pending { background: #d1d5db; }
@@ -78,7 +70,6 @@ ROADMAP_CSS = """
 
 def _render_roadmap(roadmap: List[RoadmapNode], active_node: int) -> None:
     parts: List[str] = []
-
     for i, node in enumerate(roadmap):
         if node.done:
             dot_cls, label_cls = "rm-d-done", "rm-l-done"
@@ -122,14 +113,46 @@ def _render_roadmap(roadmap: List[RoadmapNode], active_node: int) -> None:
     st.html(html)
 
 
-def _ensure_session_state(problems: List[Problem]) -> None:
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    if "teaching_state" not in st.session_state:
-        st.session_state.teaching_state = TeachingState()
-    if "problems" not in st.session_state:
-        st.session_state.problems = problems
+# ---------------------------------------------------------------------------
+# Initialization page: upload file
+# ---------------------------------------------------------------------------
 
+def _show_upload_page() -> None:
+    st.title("📖 Tutorial Assistant")
+    st.markdown("Upload a **Markdown** or **PDF** file containing your tutorial problems to get started.")
+
+    uploaded = st.file_uploader(
+        "Drop your file here",
+        type=["md", "txt", "pdf"],
+        label_visibility="collapsed",
+    )
+
+    if uploaded is not None:
+        fname = uploaded.name.lower()
+        with st.spinner("Parsing problems..."):
+            if fname.endswith(".pdf"):
+                raw_text = parse_pdf(uploaded.read())
+                problems = extract_problems_from_text(raw_text)
+            else:
+                text = uploaded.read().decode("utf-8")
+                problems = parse_markdown(text)
+                if not problems:
+                    problems = extract_problems_from_text(text)
+
+        if not problems:
+            st.error("Could not extract any problems from the file. Please check the format.")
+            return
+
+        st.session_state.problems = problems
+        st.session_state.file_name = uploaded.name
+        st.session_state.messages = []
+        st.session_state.teaching_state = TeachingState()
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Chat page
+# ---------------------------------------------------------------------------
 
 PROBLEM_INTENTS = {"concept", "example", "next", "full_solution"}
 
@@ -187,16 +210,8 @@ def _refresh_roadmap() -> None:
             node.active_leaf = max(-1, min(active_leaf, len(node.leaves) - 1))
 
 
-def main() -> None:
-    st.set_page_config(page_title="Tutorial Assistant", page_icon="📖", layout="wide")
+def _show_chat_page() -> None:
     st.html(SIDEBAR_CSS)
-
-    problems = parse_problems(LESSON_FILE)
-    if not problems:
-        st.error("No problems found. Make sure lesson.md has `## <title>` sections.")
-        st.stop()
-
-    _ensure_session_state(problems)
     t_state: TeachingState = st.session_state.teaching_state
 
     with st.sidebar:
@@ -206,6 +221,11 @@ def main() -> None:
         else:
             st.caption("Say hi to start the lesson!")
         st.divider()
+        st.caption(f"File: **{st.session_state.get('file_name', '—')}**")
+        if st.button("New lesson", use_container_width=True):
+            for key in ["problems", "file_name", "messages", "teaching_state", "_last_intent"]:
+                st.session_state.pop(key, None)
+            st.rerun()
         if st.button("Clear chat", use_container_width=True):
             st.session_state.messages = []
             reset_state(t_state)
@@ -230,6 +250,19 @@ def main() -> None:
         st.session_state.messages.append({"role": "assistant", "content": _fix_latex(answer)})
         _refresh_roadmap()
         st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    st.set_page_config(page_title="Tutorial Assistant", page_icon="📖", layout="wide")
+
+    if "problems" not in st.session_state:
+        _show_upload_page()
+    else:
+        _show_chat_page()
 
 
 if __name__ == "__main__":

@@ -34,6 +34,29 @@ def _quick_json(prompt: str) -> dict | list | None:
         return None
 
 
+def extract_problems_from_text(raw_text: str) -> List[Problem]:
+    prompt = (
+        "You are extracting problems from a tutorial/exercise document.\n"
+        "The following is raw text from a PDF or document.\n"
+        "Extract each distinct problem/question/exercise as a separate item.\n\n"
+        f"Document text:\n{raw_text[:6000]}\n\n"
+        "Return a JSON array where each item has:\n"
+        '- "title": a short label like "Problem 1", "Question 2", "Exercise 3" etc.\n'
+        '- "statement": the full problem text\n\n'
+        "Reply with ONLY valid JSON, no markdown fences. Example:\n"
+        '[{"title": "Problem 1", "statement": "Solve dy/dx = xy"}]'
+    )
+    data = _quick_json(prompt)
+    if isinstance(data, list) and len(data) >= 1:
+        problems = []
+        for item in data:
+            if isinstance(item, dict) and "title" in item and "statement" in item:
+                problems.append(Problem(title=str(item["title"]), statement=str(item["statement"])))
+        if problems:
+            return problems
+    return [Problem(title="Full Document", statement=raw_text[:3000])]
+
+
 VALID_INTENTS = {"greeting", "topic", "concept", "example", "next", "full_solution", "other"}
 
 
