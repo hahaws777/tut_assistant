@@ -1,44 +1,65 @@
 # Tutorial Assistant
 
-An interactive Streamlit-based teaching assistant that works with **any subject**. Upload a PDF or Markdown file with problems, and it becomes an AI tutor that explains concepts, walks through solutions step-by-step, and tracks your progress with a dynamic roadmap.
+A production-style interactive tutoring app built with Streamlit.  
+Upload a PDF/Markdown lesson and get a guided tutor with deterministic teaching flow, multi-session persistence, and structured lesson state.
 
 ## Features
 
-- **Subject-agnostic**: works for ODE, calculus, linear algebra, physics, or any problem-based tutorial
-- **File upload**: drag & drop PDF, Markdown, or TXT — the AI extracts problems automatically
-- **AI-driven intent & roadmap**: all classification, roadmap generation, and teaching responses are handled by GPT
-- **Dynamic roadmap** (right sidebar):
-  - Main nodes generated from your problems on greeting
-  - Sub-step leaves grow dynamically as you work through each problem
-  - Problems marked complete when solved or when you move on
-- **Chat-driven teaching flow**:
-  - Greeting / topic overview
-  - Concept explanation (theory only, no solving)
-  - Jump to any problem by name or number
-  - Guided step-by-step walkthrough
-  - Full solution on request
-- **LaTeX support**: inline `$...$` and display `$$...$$` with KaTeX rendering + auto-fix for `\(...\)` and `\[...\]`
-- **Persistent session**: chat history and roadmap survive browser refresh (saved to `.session.json`)
-- **Export**: download the full chat as a Markdown file
+- **Multi-session persistence (SQLite)**:
+  - Create, switch, resume, and delete sessions
+  - Each session has a unique `session_id`
+  - Per-session persistence includes:
+    - messages
+    - uploaded lesson/file reference
+    - current teaching state
+    - current problem index
+    - current step index
+    - hint mode and hint level
+    - roadmap state
+- **Explicit teaching state machine**:
+  - `IDLE`, `OVERVIEW`, `CONCEPT`, `EXAMPLE_SELECTED`, `STEP_BY_STEP`, `HINT`, `FULL_SOLUTION`
+  - Deterministic transitions based on user intent
+- **Hybrid intent classification**:
+  - Rule-based regex/keyword routing first (fast and deterministic)
+  - LLM fallback only when rule-based routing is uncertain
+- **Structured lesson representation**:
+  - Problems normalized into structured objects with:
+    - `id`, `title`, `text`
+    - `inferred_topic`, `inferred_type`, `difficulty`
+    - optional `source_location`
+- **Adaptive hint behavior**:
+  - Repeated hint requests increase hint specificity (`hint_level` 0-3)
+  - Full solution continues on the same active problem context
+- **Roadmap + progress UI**:
+  - Dynamic roadmap with node/leaf progress
+  - Current teaching state, selected problem, step index shown in sidebar
+- **LaTeX support**:
+  - Inline `$...$` and display `$$...$$`
+  - Auto-fix for `\(...\)` and `\[...\]`
+- **Chat export**:
+  - Download full chat as Markdown
 
 ## Project structure
 
-```
-├── app.py            # Streamlit UI, upload page, chat page
-├── parser.py         # Markdown parser + PDF text extraction (pymupdf)
-├── llm.py            # OpenAI API: intent classifier, roadmap, teaching replies
-├── state.py          # Session state & roadmap data structures
-├── persist.py        # Save/load session to disk (.session.json)
-├── lesson.md         # Example problems (optional, can upload instead)
+```text
+├── app.py            # Streamlit UI, session controls, chat flow
+├── intent.py         # Hybrid intent classifier (rule-first + LLM fallback)
+├── llm.py            # LLM extraction/roadmap/reply logic
+├── models.py         # Structured data models
+├── parser.py         # Markdown parser + PDF extraction + problem normalization
+├── state.py          # Teaching state machine + transition logic
+├── storage.py        # SQLite session persistence
+├── persist.py        # Legacy single-session persistence (kept for compatibility)
+├── lesson.md         # Example lesson file
 ├── requirements.txt
 └── README.md
 ```
 
 ## Quick start
 
-1. Create `.env` in the project folder:
+1. Create `.env` in project root:
 
-```
+```env
 OPENAI_API_KEY=sk-...
 ```
 
@@ -48,19 +69,19 @@ OPENAI_API_KEY=sk-...
 pip install -r requirements.txt
 ```
 
-3. Run:
+3. Run app:
 
 ```bash
 streamlit run app.py
 ```
 
-4. Upload a PDF or Markdown file on the welcome page, then start chatting.
+4. Upload a PDF/Markdown/TXT lesson and start chatting.
 
-## Input formats
+## Input format
 
 ### Markdown / TXT
 
-Each `##` heading becomes a problem:
+Each `##` heading becomes a problem block:
 
 ```markdown
 # My Tutorial
@@ -72,29 +93,30 @@ Solve dy/dx = xy
 Find the eigenvalues of matrix A = [[2, 1], [1, 3]]
 
 ## Question 3
-Explain Newton's second law and apply it to a 5kg block on a 30° incline.
+Explain Newton's second law and apply it to a 5kg block on a 30 degree incline.
 ```
 
 ### PDF
 
-Any PDF with problems/exercises. The AI reads the text and extracts each problem automatically — no special formatting required.
+Any PDF containing exercises/problems. The app extracts text and builds structured problem objects.
 
-## Teaching flow
+## Intent examples
 
-| You say | Assistant does |
+| User message | Routed intent |
 |---|---|
-| `hi` / `hello` | Greets you, generates roadmap from problems |
-| `what are we learning today?` | Explains topic and learning objectives |
-| `jump to Q3` | Shows the problem statement only, asks how to proceed |
-| `explain the concept` | Theory explanation without solving |
-| `walk me through it` | Starts step-by-step guided walkthrough |
-| `next step` | Reveals the next step only |
-| `full solution` | Complete derivation / answer |
-| `good job` / moves to next problem | Marks current problem as done |
+| `hi` | `greeting` |
+| `what are we learning today` | `overview` |
+| `what is the concept` | `concept` |
+| `go through an example` | `example` |
+| `next step` | `next_step` |
+| `hint` | `hint` |
+| `full solution` | `full_solution` |
+| `jump to q3` / `problem 3` | `jump_to_problem` |
 
 ## Sidebar controls
 
-- **Roadmap**: visual progress tracker with main nodes + sub-step leaves
-- **Export chat (.md)**: download full conversation as Markdown
-- **New lesson**: return to upload page with a fresh session
-- **Clear chat**: reset conversation but keep the same file
+- **Sessions**: create/switch/delete sessions
+- **Roadmap**: visualize progress for current lesson
+- **State panel**: current teaching state, problem index, step index, hint level
+- **Export chat (.md)**: export current session chat
+- **Clear chat**: clear messages and reset teaching state in current session

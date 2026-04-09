@@ -5,8 +5,8 @@ from typing import Generator, List
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from parser import Problem
-from state import RoadmapNode
+from parser import Problem, _build_problem
+from state import RoadmapNode, TeachingFlowState
 
 
 load_dotenv()
@@ -51,26 +51,38 @@ def extract_problems_from_text(raw_text: str) -> List[Problem]:
         problems = []
         for item in data:
             if isinstance(item, dict) and "title" in item and "statement" in item:
-                problems.append(Problem(title=str(item["title"]), statement=str(item["statement"])))
+                problems.append(_build_problem(len(problems), str(item["title"]), str(item["statement"])))
         if problems:
             return problems
-    return [Problem(title="Full Document", statement=raw_text[:3000])]
+    return [_build_problem(0, "Full Document", raw_text[:3000])]
 
 
-VALID_INTENTS = {"greeting", "topic", "concept", "example", "next", "full_solution", "other"}
+VALID_INTENTS = {
+    "greeting",
+    "overview",
+    "concept",
+    "example",
+    "next_step",
+    "hint",
+    "full_solution",
+    "jump_to_problem",
+    "unknown",
+}
 
 
-def classify_intent(user_text: str) -> str:
+def classify_intent_fallback(user_text: str) -> str:
     prompt = (
         "You are an intent classifier for a teaching chatbot.\n"
         "Classify the user message into exactly ONE of these intents:\n"
         "- greeting: greetings like hi, hello, hey, good morning, etc.\n"
-        "- topic: asking what we are learning today, what topics, what's the lesson about, etc.\n"
+        "- overview: asking what we are learning today, what topics, what's the lesson about, etc.\n"
         "- concept: asking to explain the concept, theory, definition, background, etc.\n"
         "- example: asking to look at / jump to / go to / start / try a specific problem, or go through an example, etc.\n"
-        "- next: asking for the next step, a hint, continue, go on, what's next, etc.\n"
+        "- next_step: asking for the next step, continue, go on, what's next, etc.\n"
+        "- hint: explicitly asking for a hint.\n"
         "- full_solution: asking for the full solution, complete answer, show all steps, solve it completely, etc.\n"
-        "- other: anything that does not fit the above.\n\n"
+        "- jump_to_problem: asking to jump to a specific problem index.\n"
+        "- unknown: anything that does not fit the above.\n\n"
         f'User message: "{user_text}"\n\n'
         "Reply with ONLY the intent label, nothing else."
     )
@@ -81,7 +93,7 @@ def classify_intent(user_text: str) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     raw = (resp.choices[0].message.content or "").strip().lower()
-    return raw if raw in VALID_INTENTS else "other"
+    return raw if raw in VALID_INTENTS else "unknown"
 
 
 def generate_initial_roadmap(problems: List[Problem]) -> List[RoadmapNode]:
@@ -155,9 +167,13 @@ def _build_system_prompt(
     intent: str,
     all_problems: List[Problem],
     hint_mode: bool,
+    current_state: TeachingFlowState,
+    current_problem_index: int,
+    current_step_index: int,
+    hint_level: int,
 ) -> str:
     problem_list = "\n".join(
-        f"  - {p.title}: {p.statement}" for p in all_problems
+        f"  - {p.id} | {p.title} | type={p.inferred_type} | topic={p.inferred_topic}: {p.statement}" for p in all_problems
     )
 
     base = (
@@ -172,7 +188,11 @@ def _build_system_prompt(
         "- Use \\frac{a}{b} not a/b for fractions in display math.\n"
         "- Use \\int, \\sum, \\ln, \\exp etc. for standard functions.\n\n"
         f"All problems in this lesson:\n{problem_list}\n\n"
-        f"Hint mode: {'ON' if hint_mode else 'OFF'}\n\n"
+        f"Hint mode: {'ON' if hint_mode else 'OFF'}\n"
+        f"Current teaching state: {current_state.value}\n"
+        f"Current problem index: {current_problem_index}\n"
+        f"Current step index: {current_step_index}\n\n"
+        f"Hint specificity level: {hint_level} (0-3)\n\n"
         "The user interacts entirely through chat. "
         "They may mention any problem by name or number. "
         "Pick the appropriate problem based on conversation context.\n\n"
@@ -189,7 +209,7 @@ def _build_system_prompt(
             "briefly mention what topic we will cover today (infer from the problems), "
             "and invite the user to start learning. Do NOT solve any problem yet."
         ),
-        "topic": (
+        "overview": (
             "The user wants to know what we are learning today.\n"
             "Infer the subject and topic from the problems. "
             "Explain the lesson topic and learning objectives. "
@@ -211,7 +231,7 @@ def _build_system_prompt(
             "ABSOLUTELY DO NOT write any solution, derivation, or steps. "
             "Not even the first step. ZERO solving."
         ),
-        "next": (
+        "next_step": (
             "The user wants the next step in the walkthrough.\n"
             "Continue from where the conversation left off.\n"
         )
@@ -220,12 +240,20 @@ def _build_system_prompt(
             if hint_mode
             else "Explain the next step in detail with the reasoning and derivation.\n"
         ),
+        "hint": (
+            "The user asks for a hint.\n"
+            "Give exactly one hint. Level 1 should be broad, level 2 more specific, level 3 almost complete setup but no final answer.\n"
+        ),
         "full_solution": (
             "The user wants the complete solution.\n"
             "Provide a full, clean derivation or answer from start to finish. "
             "Be thorough and show every step."
         ),
-        "other": (
+        "jump_to_problem": (
+            "The user wants to switch to another problem.\n"
+            "Show only the selected problem statement and type, then ask whether they want concept, hint, next step, or full solution."
+        ),
+        "unknown": (
             "The user's message does not match a standard teaching command.\n"
             "Try your best to respond helpfully within the context of the lesson. "
             "If the user mentions a specific problem, show ONLY its statement and type — do NOT solve it. "
@@ -244,11 +272,19 @@ def stream_teaching_reply(
     all_problems: List[Problem],
     hint_mode: bool,
     chat_history: List[dict],
+    current_state: TeachingFlowState,
+    current_problem_index: int,
+    current_step_index: int,
+    hint_level: int,
 ) -> Generator[str, None, None]:
     system_prompt = _build_system_prompt(
         intent=intent,
         all_problems=all_problems,
         hint_mode=hint_mode,
+        current_state=current_state,
+        current_problem_index=current_problem_index,
+        current_step_index=current_step_index,
+        hint_level=hint_level,
     )
 
     messages: list[dict] = [{"role": "system", "content": system_prompt}]

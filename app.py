@@ -4,15 +4,15 @@ from typing import List
 import streamlit as st
 
 from llm import (
-    classify_intent,
     extract_problems_from_text,
     generate_initial_roadmap,
     stream_teaching_reply,
     update_roadmap_leaves,
 )
+from intent import classify_intent_hybrid
 from parser import Problem, parse_markdown, parse_pdf
-from persist import clear_session, load_session, save_session
-from state import RoadmapNode, TeachingState, reset_state
+from state import RoadmapNode, TeachingState, apply_transition, reset_state
+from storage import create_session_id, delete_session, list_sessions, load_session, save_session
 
 
 def _fix_latex(text: str) -> str:
@@ -148,7 +148,7 @@ def _show_upload_page() -> None:
         st.session_state.file_name = uploaded.name
         st.session_state.messages = []
         st.session_state.teaching_state = TeachingState()
-        save_session(problems, [], st.session_state.teaching_state, uploaded.name)
+        save_session(st.session_state.session_id, problems, [], st.session_state.teaching_state, uploaded.name)
         st.rerun()
 
 
@@ -161,9 +161,12 @@ def _get_stream(user_text: str):
     t_state: TeachingState = st.session_state.teaching_state
 
     with st.spinner("Thinking..."):
-        intent = classify_intent(user_text)
+        intent, problem_idx = classify_intent_hybrid(user_text)
+        if problem_idx is not None and 0 <= problem_idx < len(problems):
+            t_state.current_problem_index = problem_idx
+        apply_transition(t_state, intent, problem_idx)
 
-        if not t_state.initialized and intent in {"greeting", "topic"}:
+        if not t_state.initialized and intent in {"greeting", "overview"}:
             t_state.roadmap = generate_initial_roadmap(problems)
             t_state.initialized = True
 
@@ -175,6 +178,10 @@ def _get_stream(user_text: str):
         all_problems=problems,
         hint_mode=t_state.hint_mode,
         chat_history=st.session_state.messages,
+        current_state=t_state.current_state,
+        current_problem_index=t_state.current_problem_index,
+        current_step_index=t_state.current_step_index,
+        hint_level=t_state.hint_level,
     )
 
 
@@ -224,6 +231,38 @@ def _show_chat_page() -> None:
     t_state: TeachingState = st.session_state.teaching_state
 
     with st.sidebar:
+        st.markdown("#### Sessions")
+        sessions = list_sessions()
+        session_options = {f'{s["title"]} | {s["updated_at"]}': s["session_id"] for s in sessions}
+        if session_options:
+            current_label = next((k for k, v in session_options.items() if v == st.session_state.session_id), None)
+            selected = st.selectbox("Choose session", list(session_options.keys()), index=list(session_options.keys()).index(current_label) if current_label else 0)
+            selected_sid = session_options[selected]
+            if selected_sid != st.session_state.session_id:
+                saved = load_session(selected_sid)
+                if saved:
+                    st.session_state.session_id = selected_sid
+                    st.session_state.problems = saved["problems"]
+                    st.session_state.messages = saved["messages"]
+                    st.session_state.teaching_state = saved["teaching_state"]
+                    st.session_state.file_name = saved["file_name"]
+                    st.rerun()
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("New session", use_container_width=True):
+                st.session_state.session_id = create_session_id()
+                for key in ["problems", "file_name", "messages", "teaching_state", "_last_intent"]:
+                    st.session_state.pop(key, None)
+                st.rerun()
+        with c2:
+            if st.button("Delete session", use_container_width=True):
+                delete_session(st.session_state.session_id)
+                st.session_state.session_id = create_session_id()
+                for key in ["problems", "file_name", "messages", "teaching_state", "_last_intent"]:
+                    st.session_state.pop(key, None)
+                st.rerun()
+        st.divider()
+
         st.markdown("#### Roadmap")
         if t_state.initialized and t_state.roadmap:
             _render_roadmap(t_state.roadmap, t_state.active_node)
@@ -231,6 +270,10 @@ def _show_chat_page() -> None:
             st.caption("Say hi to start the lesson!")
         st.divider()
         st.caption(f"File: **{st.session_state.get('file_name', '—')}**")
+        st.caption(f"State: **{t_state.current_state.value}**")
+        st.caption(f"Problem: **{t_state.current_problem_index + 1}**")
+        st.caption(f"Step: **{t_state.current_step_index}**")
+        st.caption(f"Hint level: **{t_state.hint_level}**")
 
         if st.session_state.get("messages"):
             md_content = _export_chat_md()
@@ -242,15 +285,11 @@ def _show_chat_page() -> None:
                 use_container_width=True,
             )
 
-        if st.button("New lesson", use_container_width=True):
-            clear_session()
-            for key in ["problems", "file_name", "messages", "teaching_state", "_last_intent"]:
-                st.session_state.pop(key, None)
-            st.rerun()
         if st.button("Clear chat", use_container_width=True):
             st.session_state.messages = []
             reset_state(t_state)
             save_session(
+                st.session_state.session_id,
                 st.session_state.problems,
                 [],
                 t_state,
@@ -277,6 +316,7 @@ def _show_chat_page() -> None:
         st.session_state.messages.append({"role": "assistant", "content": _fix_latex(answer)})
         _refresh_roadmap()
         save_session(
+            st.session_state.session_id,
             st.session_state.problems,
             st.session_state.messages,
             st.session_state.teaching_state,
@@ -292,8 +332,12 @@ def _show_chat_page() -> None:
 def main() -> None:
     st.set_page_config(page_title="Tutorial Assistant", page_icon="📖", layout="wide")
 
+    if "session_id" not in st.session_state:
+        existing = list_sessions()
+        st.session_state.session_id = existing[0]["session_id"] if existing else create_session_id()
+
     if "problems" not in st.session_state:
-        saved = load_session()
+        saved = load_session(st.session_state.session_id)
         if saved:
             st.session_state.problems = saved["problems"]
             st.session_state.messages = saved["messages"]
