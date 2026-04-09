@@ -208,3 +208,55 @@ def get_event_metrics(limit: int = 200) -> Dict[str, float | int]:
         "parse_failure_count": parse_failure_count,
     }
 
+
+def fetch_recent_conversation_turns(limit: int = 100, session_id: Optional[str] = None) -> List[Dict[str, str]]:
+    turns: List[Dict[str, str]] = []
+    try:
+        with _conn() as conn:
+            if session_id:
+                rows = conn.execute(
+                    """
+                    SELECT session_id, updated_at, payload
+                    FROM sessions
+                    WHERE session_id = ?
+                    ORDER BY updated_at DESC
+                    """,
+                    (session_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT session_id, updated_at, payload
+                    FROM sessions
+                    ORDER BY updated_at DESC
+                    """,
+                ).fetchall()
+    except Exception:
+        return []
+
+    for sid, updated_at, payload in rows:
+        try:
+            data = json.loads(payload)
+            messages = data.get("messages", [])
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("role") != "user":
+                    continue
+                text = str(msg.get("content", "")).strip()
+                if not text:
+                    continue
+                turns.append(
+                    {
+                        "session_id": sid,
+                        "ts": str(updated_at),
+                        "user_text": text,
+                    }
+                )
+                if len(turns) >= limit:
+                    return turns
+        except (TypeError, json.JSONDecodeError):
+            continue
+
+    return turns
+

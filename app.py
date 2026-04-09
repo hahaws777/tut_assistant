@@ -12,6 +12,7 @@ from llm import (
 )
 from intent import classify_intent_hybrid
 from parser import Problem, parse_markdown, parse_pdf
+from policy import get_policy_meta
 from sanitizer import sanitize_text
 from state import RoadmapNode, TeachingState, apply_transition, reset_state
 from storage import (
@@ -23,6 +24,9 @@ from storage import (
     log_event,
     save_session,
 )
+
+
+POLICY_META = get_policy_meta()
 
 
 def _fix_latex(text: str) -> str:
@@ -156,6 +160,7 @@ def _show_upload_page() -> None:
                                 "source": "upload_pdf",
                                 "pattern_count": len(sanitized.suspicious_patterns),
                                 "patterns": sanitized.suspicious_patterns,
+                                "policy_version": POLICY_META["policy_version"],
                             },
                         )
                     except Exception:
@@ -176,6 +181,7 @@ def _show_upload_page() -> None:
                                 "source": "upload_text",
                                 "pattern_count": len(sanitized.suspicious_patterns),
                                 "patterns": sanitized.suspicious_patterns,
+                                "policy_version": POLICY_META["policy_version"],
                             },
                         )
                     except Exception:
@@ -232,6 +238,7 @@ def _get_stream(user_text: str):
                     "source": "user_input",
                     "pattern_count": len(safe_input.suspicious_patterns),
                     "patterns": safe_input.suspicious_patterns,
+                        "policy_version": POLICY_META["policy_version"],
                 },
             )
         except Exception:
@@ -253,7 +260,11 @@ def _get_stream(user_text: str):
                 event_type="intent_classified",
                 intent=intent,
                 fallback_used=int(fallback_used),
-                metadata={"user_text_len": len(safe_input.text), "truncated": safe_input.was_truncated},
+                metadata={
+                    "user_text_len": len(safe_input.text),
+                    "truncated": safe_input.was_truncated,
+                    "policy_version": POLICY_META["policy_version"],
+                },
             )
         except Exception:
             pass
@@ -364,6 +375,7 @@ def _show_chat_page() -> None:
         st.caption(f"fallback_rate: **{metrics['fallback_rate']:.2%}**")
         st.caption(f"avg_latency_ms: **{metrics['avg_latency_ms']}**")
         st.caption(f"parse_failure_count: **{metrics['parse_failure_count']}**")
+        st.caption(f"policy_version: **{POLICY_META['policy_version']}**")
         st.divider()
 
         st.markdown("#### Roadmap")
@@ -424,7 +436,10 @@ def _show_chat_page() -> None:
                     event_type="reply_complete",
                     intent=st.session_state.get("_last_intent"),
                     latency_ms=latency_ms,
-                    metadata={"answer_len": len(answer) if isinstance(answer, str) else 0},
+                    metadata={
+                        "answer_len": len(answer) if isinstance(answer, str) else 0,
+                        "policy_version": POLICY_META["policy_version"],
+                    },
                 )
             except Exception:
                 pass

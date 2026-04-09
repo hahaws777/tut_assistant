@@ -2,6 +2,7 @@ import re
 from typing import Optional, Tuple
 
 from llm import classify_intent_fallback
+from policy import INTENT_RULES
 
 
 INTENTS = {
@@ -40,16 +41,7 @@ def classify_intent_hybrid(user_text: str, enable_llm_fallback: bool = True) -> 
     if problem_idx is not None:
         return "jump_to_problem", problem_idx, False
 
-    rules = [
-        ("greeting", r"\b(hi|hello|hey|yo|good morning|good afternoon|good evening)\b"),
-        ("overview", r"\b(what are we learning today|what.*learn today|overview|lesson plan|roadmap|today.?s topic)\b"),
-        ("concept", r"\b(concept|theory|definition|intuition|what is|explain why)\b"),
-        ("example", r"\b(example|go through|walk through|start problem|pick a problem|try problem)\b"),
-        ("next_step", r"\b(next step|what.?s next|continue|go on|next)\b"),
-        ("hint", r"\b(hint|clue|nudge|a little help)\b"),
-        ("full_solution", r"\b(full solution|complete solution|solve it|entire solution|show all steps)\b"),
-    ]
-    for intent, pattern in rules:
+    for intent, pattern in INTENT_RULES:
         if re.search(pattern, text):
             return intent, None, False
 

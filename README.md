@@ -167,3 +167,64 @@ Notes:
 
 - This is a baseline safety layer for practical robustness, not a complete jailbreak-proof solution.
 - The design is intentionally simple and extensible for future rule packs or model-based classifiers.
+
+## Policy Versioning
+
+The intent routing policy is versioned in `policy.py`.
+
+- `POLICY_VERSION`: current strategy version (for example `v1.1.0`)
+- `INTENT_RULES`: centralized regex rules used by `intent.py`
+- `get_policy_meta()`: returns metadata (`policy_version`, `rule_count`, `updated_at`)
+
+Where it is used:
+
+- Sidebar metrics shows active `policy_version`
+- Events `intent_classified`, `reply_complete`, `safety_flagged` include `policy_version` in `metadata_json`
+
+## Replay Evaluation
+
+Replay evaluation re-runs recent user turns from local session storage and simulates intent + state transitions.
+
+Run:
+
+```bash
+python scripts/replay_eval.py --limit 100
+```
+
+Optional:
+
+```bash
+python scripts/replay_eval.py --limit 100 --session-id <session_id>
+python scripts/replay_eval.py --limit 100 --output eval/replay_report.md
+python scripts/replay_eval.py --limit 100 --enable-llm-fallback
+```
+
+Output:
+
+- Console summary (`total_turns`, `unknown_ratio`, `jump_to_problem_hit_rate`)
+- Markdown report (default: `eval/replay_report.md`) with:
+  - Summary
+  - Intent distribution
+  - Top suspicious replay cases
+
+## Conversation Regression Tests
+
+Conversation-level regression tests are in `tests/test_conversation_flows.py`.
+
+Covered scenarios:
+
+- A) `greeting -> overview -> example -> next_step -> hint -> full_solution`
+- B) `jump_to_problem` resets `current_step_index`
+- C) ambiguous input falls back to `unknown` when fallback is disabled
+
+Run:
+
+```bash
+python -m pytest -q
+```
+
+## Known Limitations
+
+- Replay evaluation reconstructs user turns from stored session payload messages; per-turn timestamps are approximated by session `updated_at`.
+- Current replay metrics focus on routing/state signals only, not semantic quality of assistant answer content.
+- `jump_to_problem_hit_rate` is computed from predicted intents during replay, not a separate ground-truth label source.
