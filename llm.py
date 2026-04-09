@@ -39,14 +39,14 @@ VALID_INTENTS = {"greeting", "topic", "concept", "example", "next", "full_soluti
 
 def classify_intent(user_text: str) -> str:
     prompt = (
-        "You are an intent classifier for an ODE teaching chatbot.\n"
+        "You are an intent classifier for a teaching chatbot.\n"
         "Classify the user message into exactly ONE of these intents:\n"
         "- greeting: greetings like hi, hello, hey, good morning, etc.\n"
         "- topic: asking what we are learning today, what topics, what's the lesson about, etc.\n"
-        "- concept: asking to explain the concept, theory, definition, what is a certain ODE type, etc.\n"
+        "- concept: asking to explain the concept, theory, definition, background, etc.\n"
         "- example: asking to look at / jump to / go to / start / try a specific problem, or go through an example, etc.\n"
         "- next: asking for the next step, a hint, continue, go on, what's next, etc.\n"
-        "- full_solution: asking for the full solution, complete derivation, show all steps, solve it completely, etc.\n"
+        "- full_solution: asking for the full solution, complete answer, show all steps, solve it completely, etc.\n"
         "- other: anything that does not fit the above.\n\n"
         f'User message: "{user_text}"\n\n'
         "Reply with ONLY the intent label, nothing else."
@@ -63,20 +63,20 @@ def classify_intent(user_text: str) -> str:
 
 def generate_initial_roadmap(problems: List[Problem]) -> List[RoadmapNode]:
     problem_desc = "\n".join(
-        f"- {p.title}: {p.statement} (type: {p.ode_type})" for p in problems
+        f"- {p.title}: {p.statement}" for p in problems
     )
     prompt = (
-        "You are building a lesson roadmap for an ODE teaching session.\n"
+        "You are building a lesson roadmap for a teaching session.\n"
         f"Problems:\n{problem_desc}\n\n"
         "Create a short label (in English, max 8 words) for each problem that will appear as a roadmap node.\n"
-        "The label should include the problem number and a brief description of the ODE type or task.\n\n"
+        "The label should include the problem number and a brief description of the topic or task.\n\n"
         "Reply with ONLY a JSON array of strings, no markdown fences. Example:\n"
-        '["Ex 1: Separable ODE dy/dx = xy", "Ex 2: Linear ODE y\' + 2y = e^x"]'
+        '["Q1: Solve separable ODE", "Q2: Linear equation with e^x"]'
     )
     data = _quick_json(prompt)
     if isinstance(data, list) and len(data) >= 1:
         return [RoadmapNode(label=str(s)) for s in data]
-    return [RoadmapNode(label=f"Ex {i+1}: {p.statement[:30]}") for i, p in enumerate(problems)]
+    return [RoadmapNode(label=f"Q{i+1}: {p.statement[:30]}") for i, p in enumerate(problems)]
 
 
 def update_roadmap_leaves(
@@ -94,7 +94,7 @@ def update_roadmap_leaves(
     history_text = "\n".join(f'{m["role"]}: {m["content"][:300]}' for m in recent)
 
     prompt = (
-        "You are tracking progress of an ODE teaching session.\n\n"
+        "You are tracking progress of a teaching session.\n\n"
         f"Current roadmap:\n{roadmap_text}\n\n"
         f"Recent conversation:\n{history_text}\n\n"
         "Based on the conversation, determine:\n"
@@ -127,25 +127,24 @@ def update_roadmap_leaves(
 
 def _build_system_prompt(
     intent: str,
-    topic: str,
     all_problems: List[Problem],
     hint_mode: bool,
 ) -> str:
     problem_list = "\n".join(
-        f"  - {p.title}: {p.statement} (type: {p.ode_type})" for p in all_problems
+        f"  - {p.title}: {p.statement}" for p in all_problems
     )
 
     base = (
-        "You are an interactive ODE teaching assistant in a university lecture.\n"
+        "You are an interactive tutorial teaching assistant.\n"
         "You are precise, pedagogical, and friendly.\n"
-        "Never introduce topics unrelated to ODE.\n\n"
+        "Automatically infer the subject and topic from the problems provided.\n"
+        "Stay on topic — only discuss content relevant to the problems.\n\n"
         "CRITICAL LaTeX formatting rules (the UI uses KaTeX):\n"
         "- Inline math: use $...$ only. NEVER use \\(...\\).\n"
         "- Display math: use $$...$$ only. NEVER use \\[...\\].\n"
         "- Always put display math $$ on its own line.\n"
         "- Use \\frac{a}{b} not a/b for fractions in display math.\n"
         "- Use \\int, \\sum, \\ln, \\exp etc. for standard functions.\n\n"
-        f"Today's lesson topic: {topic}\n"
         f"All problems in this lesson:\n{problem_list}\n\n"
         f"Hint mode: {'ON' if hint_mode else 'OFF'}\n\n"
         "The user interacts entirely through chat. "
@@ -154,35 +153,36 @@ def _build_system_prompt(
         "ABSOLUTE RULE: NEVER solve or start deriving a problem unless the user EXPLICITLY asks for steps, "
         "a walkthrough, a hint, or a full solution. "
         "When the user simply jumps to / selects / mentions a problem, "
-        "ONLY show the problem statement and its ODE type, then ask how to proceed.\n"
+        "ONLY show the problem statement and its type, then ask how to proceed.\n"
     )
 
     intent_instructions = {
         "greeting": (
             "The user is greeting you.\n"
-            "Respond warmly, introduce yourself as the ODE teaching assistant, "
-            "briefly mention what topic we will cover today based on the problems, "
+            "Respond warmly, introduce yourself as the tutorial teaching assistant, "
+            "briefly mention what topic we will cover today (infer from the problems), "
             "and invite the user to start learning. Do NOT solve any problem yet."
         ),
         "topic": (
             "The user wants to know what we are learning today.\n"
-            "Explain the lesson topic and learning objectives based on the problems provided. "
-            "Mention the types of ODE we will practice. Do NOT solve any problem yet."
+            "Infer the subject and topic from the problems. "
+            "Explain the lesson topic and learning objectives. "
+            "Do NOT solve any problem yet."
         ),
         "concept": (
-            "The user wants to understand the concept behind a certain ODE type.\n"
-            "Infer which type from the conversation context.\n"
-            "Explain in a structured way: Definition, Recognition cues, Standard method, Common mistakes.\n"
+            "The user wants to understand a concept or theory.\n"
+            "Infer which concept from the conversation context and the problems.\n"
+            "Explain in a structured way: Definition, Key ideas, Standard method, Common mistakes.\n"
             "Do NOT solve the specific problem. Only explain the theory."
         ),
         "example": (
             "The user wants to look at a specific problem.\n"
             "Pick the most relevant problem based on conversation context.\n"
             "Your response must contain ONLY:\n"
-            "1. The problem statement (in LaTeX)\n"
-            "2. The ODE type identification (one sentence)\n"
+            "1. The problem statement (in LaTeX if applicable)\n"
+            "2. The problem type identification (one sentence)\n"
             "3. A question asking the user how to proceed\n"
-            "ABSOLUTELY DO NOT write any solution, derivation, rearrangement, or mathematical steps. "
+            "ABSOLUTELY DO NOT write any solution, derivation, or steps. "
             "Not even the first step. ZERO solving."
         ),
         "next": (
@@ -192,18 +192,18 @@ def _build_system_prompt(
         + (
             "Hint mode is ON: give only a brief hint (1-2 sentences) without revealing full derivation.\n"
             if hint_mode
-            else "Explain the next step in detail with the mathematical derivation.\n"
+            else "Explain the next step in detail with the reasoning and derivation.\n"
         ),
         "full_solution": (
             "The user wants the complete solution.\n"
-            "Provide a full, clean mathematical derivation from start to final general solution. "
+            "Provide a full, clean derivation or answer from start to finish. "
             "Be thorough and show every step."
         ),
         "other": (
             "The user's message does not match a standard teaching command.\n"
-            "Try your best to respond helpfully within the context of ODE teaching. "
+            "Try your best to respond helpfully within the context of the lesson. "
             "If the user mentions a specific problem, show ONLY its statement and type — do NOT solve it. "
-            "If the question is a conceptual question about ODE, answer it. "
+            "If the question is a conceptual question, answer it. "
             "If it is truly off-topic, gently redirect to the lesson."
         ),
     }
@@ -215,14 +215,12 @@ def _build_system_prompt(
 def stream_teaching_reply(
     user_text: str,
     intent: str,
-    topic: str,
     all_problems: List[Problem],
     hint_mode: bool,
     chat_history: List[dict],
 ) -> Generator[str, None, None]:
     system_prompt = _build_system_prompt(
         intent=intent,
-        topic=topic,
         all_problems=all_problems,
         hint_mode=hint_mode,
     )

@@ -1,7 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
-
-from parser import Problem
+from typing import List
 
 
 @dataclass
@@ -25,12 +23,3 @@ def reset_state(state: TeachingState) -> None:
     state.roadmap = []
     state.active_node = -1
     state.initialized = False
-
-
-def lesson_topic(problems: List[Problem]) -> str:
-    if not problems:
-        return "ODE fundamentals"
-    types = {p.ode_type for p in problems}
-    if len(types) == 1:
-        return next(iter(types))
-    return "mixed first-order ODE techniques"

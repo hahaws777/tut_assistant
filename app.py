@@ -10,7 +10,7 @@ from llm import (
     update_roadmap_leaves,
 )
 from parser import Problem, parse_problems
-from state import RoadmapNode, TeachingState, lesson_topic, reset_state
+from state import RoadmapNode, TeachingState, reset_state
 
 
 LESSON_FILE = "lesson.md"
@@ -137,7 +137,6 @@ PROBLEM_INTENTS = {"concept", "example", "next", "full_solution"}
 def _get_stream(user_text: str):
     problems: List[Problem] = st.session_state.problems
     t_state: TeachingState = st.session_state.teaching_state
-    topic = lesson_topic(problems)
 
     with st.spinner("Thinking..."):
         intent = classify_intent(user_text)
@@ -151,7 +150,6 @@ def _get_stream(user_text: str):
     return stream_teaching_reply(
         user_text=user_text,
         intent=intent,
-        topic=topic,
         all_problems=problems,
         hint_mode=t_state.hint_mode,
         chat_history=st.session_state.messages,
@@ -190,12 +188,12 @@ def _refresh_roadmap() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="ODE Teaching UI", page_icon="📘", layout="wide")
+    st.set_page_config(page_title="Tutorial Assistant", page_icon="📖", layout="wide")
     st.html(SIDEBAR_CSS)
 
     problems = parse_problems(LESSON_FILE)
     if not problems:
-        st.error("No problems found. Check lesson.md uses `## Problem N` format.")
+        st.error("No problems found. Make sure lesson.md has `## <title>` sections.")
         st.stop()
 
     _ensure_session_state(problems)
@@ -213,13 +211,13 @@ def main() -> None:
             reset_state(t_state)
             st.rerun()
 
-    st.title("📘 ODE Lecture Assistant")
+    st.title("📖 Tutorial Assistant")
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(_fix_latex(message["content"]))
 
-    user_input = st.chat_input("Ask about today's ODE lesson...")
+    user_input = st.chat_input("Ask about today's lesson...")
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):

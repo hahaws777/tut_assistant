@@ -1,50 +1,68 @@
-# ODE Teaching UI
+# Tutorial Assistant
 
-An interactive Streamlit teaching interface for ODE lessons based on a markdown problem set (problems only, no solutions).
+An interactive Streamlit-based teaching assistant that works with **any subject**. Feed it a markdown file with problems, and it becomes an AI tutor that explains concepts, walks through solutions step-by-step, and tracks your progress.
 
 ## Features
 
-- Parse problems from `lesson.md`
-- Infer ODE type automatically (separable / linear / exact / second-order baseline)
-- Chat-driven teaching flow with state machine:
-  - greeting/topic overview
-  - concept explanation
-  - guided example walkthrough
-  - next-step or hint-only progression
-  - full derivation on request
-- Sidebar controls:
-  - problem selector
-  - hint mode toggle
-  - show full solution
-  - clear chat
+- **Subject-agnostic**: works for ODE, calculus, linear algebra, physics, or any problem-based tutorial
+- **AI-driven**: the AI infers the subject, topic, and problem types automatically from `lesson.md`
+- **Dynamic roadmap**: right-side panel shows progress; main nodes generated at start, sub-steps grow as you work through problems
+- **Chat-driven teaching flow**:
+  - Greeting / topic overview
+  - Concept explanation
+  - Guided step-by-step walkthrough
+  - Hint mode
+  - Full solution on request
+- **LaTeX support**: inline `$...$` and display `$$...$$` with KaTeX rendering
 
 ## Project structure
 
 ```
-ode-teaching-ui/
-├── app.py
-├── parser.py
-├── llm.py
-├── state.py
-├── lesson.md
+├── app.py            # Streamlit UI + chat logic
+├── parser.py         # Markdown problem parser
+├── llm.py            # OpenAI API calls (intent, roadmap, teaching)
+├── state.py          # Session state & roadmap data structures
+├── lesson.md         # Your problems (edit this!)
 ├── requirements.txt
 └── README.md
 ```
 
-## Run
+## Quick start
 
-1. Ensure `.env` contains:
-   - `OPENAI_API_KEY=...`
-2. Install dependencies:
-   - `pip install -r requirements.txt`
-3. Start app:
-   - `streamlit run app.py`
+1. Create `.env`:
+   ```
+   OPENAI_API_KEY=sk-...
+   ```
+2. Install:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Run:
+   ```bash
+   streamlit run app.py
+   ```
 
-## Teaching flow mapping
+## Lesson format
 
-- `hi` / `hello` -> topic overview
-- `what are we learning today?` -> lesson objective
-- `what is the concept?` -> concept explanation only
-- `go through an example` -> start guided walkthrough
-- `next step` / `hint` -> reveal only next step (or hint if Hint Mode is on)
-- `full solution` -> full derivation
+Edit `lesson.md` with any subject. Each `##` heading becomes a problem:
+
+```markdown
+# My Tutorial
+
+## Problem 1
+Solve dy/dx = xy
+
+## Problem 2
+Find the eigenvalues of matrix A = [[2, 1], [1, 3]]
+
+## Question 3
+Explain Newton's second law and apply it to a 5kg block on a 30° incline.
+```
+
+## Teaching flow
+
+- `hi` / `hello` → AI greets you, generates roadmap from problems
+- `jump to Q2` → shows the problem statement only
+- `explain the concept` → theory explanation without solving
+- `walk me through it` / `next step` → step-by-step guided walkthrough
+- `full solution` → complete derivation/answer
